@@ -25,6 +25,12 @@ func main() {
 		log.Fatal("Erro: TELEGRAM_BOT_TOKEN não definido.")
 	}
 
-	// Iniciar o bot do Telegram
-	telegram.StartBot(cfg)
+	// Inicializa o bot do Telegram
+	bot, err := telegram.NewBot(cfg)
+	if err != nil {
+		log.Fatalf("Erro ao inicializar o bot do Telegram: %v", err)
+	}
+
+	// Inicia o bot
+	bot.Start()
 }

@@ -35,3 +35,11 @@ type Employee struct {
 type EmployeesResponse struct {
 	Employees []Employee `json:"employees"`
 }
+
+// TimeBalanceEntry representa os dados para atualização do banco de horas
+type TimeBalanceEntry struct {
+	Amount      float64 `json:"amount"`
+	Date        string  `json:"date"`
+	Observation string  `json:"observation"`
+	Withdraw    bool    `json:"withdraw"`
+}
