@@ -17,9 +17,72 @@ Certifique-se de que você tenha os seguintes requisitos instalados:
 - Conta no [Telegram](https://telegram.org/) e um bot criado através do [BotFather](https://core.telegram.org/bots#botfather).
 - Conta no [Ponto Mais](https://www.pontomais.com.br/) para integração com a API.
 
-### Passos para Instalação
+### Usando Docker (Recomendado)
 
 1. Clone o repositório:
    ```bash
    git clone https://github.com/jeffemart/PontoGo.git
    cd PontoGo
+   ```
+
+2. Copie o arquivo de exemplo de ambiente e configure suas variáveis:
+   ```bash
+   cp .env_example .env
+   ```
+
+3. Execute com Docker Compose:
+   ```bash
+   docker-compose up -d
+   ```
+
+### Instalação Manual
+
+1. Clone o repositório:
+   ```bash
+   git clone https://github.com/jeffemart/PontoGo.git
+   cd PontoGo
+   ```
+
+2. Copie o arquivo de exemplo de ambiente e configure suas variáveis:
+   ```bash
+   cp .env_example .env
+   ```
+
+3. Instale as dependências:
+   ```bash
+   go mod download
+   ```
+
+4. Execute a aplicação:
+   ```bash
+   go run app/cmd/main.go
+   ```
+
+## Configuração
+
+Configure as seguintes variáveis de ambiente no arquivo `.env`:
+
+```env
+# Configurações da API do Ponto Mais
+PONTOMAIS_TOKEN="seu_token"
+PONTOMAIS_BASE_URL="https://url.dominio.com"
+
+# Configurações do Bot do Telegram
+TELEGRAM_BOT_TOKEN="seu_bot_token"
+TELEGRAM_HOSTS=123456789,987654321
+
+# Modo Debug
+DEBUG=false
+```
+
+## Docker Hub
+
+A imagem Docker está disponível no Docker Hub:
+
+```bash
+docker pull <seu_usuario>/pontogo:latest
+```
+
+## Licença
+
+Este projeto está licenciado sob a MIT License - veja o arquivo [LICENSE](LICENSE) para detalhes.
