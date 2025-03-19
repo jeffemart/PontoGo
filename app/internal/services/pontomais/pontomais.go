@@ -8,9 +8,8 @@ import (
 	"log"
 	"net/http"
 
-	"encoding/base64"
-
 	"github.com/jeffemart/PontoGo/app/internal/models"
+	"github.com/jeffemart/PontoGo/app/internal/utils"
 )
 
 // GetEmployees faz a requisição à API do Ponto Mais para listar colaboradores
@@ -20,8 +19,8 @@ func GetEmployees(cfg *models.Config) ([]models.Employee, error) {
 		return nil, fmt.Errorf("variáveis de ambiente não definidas corretamente")
 	}
 
-	// Decodifica o token do Ponto Mais
-	decodedToken, err := base64.StdEncoding.DecodeString(cfg.PontoMaisToken)
+	// Decodifica o token do Ponto Mais usando a função utilitária
+	decodedToken, err := utils.DecodeBase64(cfg.PontoMaisToken)
 	if err != nil {
 		log.Printf("Erro ao decodificar o token: %v", err)
 		return nil, err
@@ -39,7 +38,7 @@ func GetEmployees(cfg *models.Config) ([]models.Employee, error) {
 	}
 
 	// Adiciona o cabeçalho com o token de autenticação decodificado
-	req.Header.Add("access-token", string(decodedToken))
+	req.Header.Add("access-token", decodedToken)
 
 	// Executa a requisição
 	resp, err := client.Do(req)
@@ -62,8 +61,6 @@ func GetEmployees(cfg *models.Config) ([]models.Employee, error) {
 		return nil, err
 	}
 
-	// log.Printf("Resposta da API do Ponto Mais: %s", string(body))
-
 	// Estrutura para armazenar a resposta
 	var result models.EmployeesResponse
 	if err := json.Unmarshal(body, &result); err != nil {
@@ -79,6 +76,13 @@ func UpdateTimeBalanceEntry(cfg *models.Config, entryID string, entry models.Tim
 	if cfg.PontoMaisBaseURL == "" || cfg.PontoMaisToken == "" {
 		log.Println("Erro: Variáveis de ambiente PONTOMAIS_TOKEN ou PONTOMAIS_BASE_URL não estão definidas.")
 		return fmt.Errorf("variáveis de ambiente não definidas corretamente")
+	}
+
+	// Decodifica o token do Ponto Mais usando a função utilitária
+	decodedToken, err := utils.DecodeBase64(cfg.PontoMaisToken)
+	if err != nil {
+		log.Printf("Erro ao decodificar o token: %v", err)
+		return err
 	}
 
 	// Monta a URL para a requisição
@@ -105,7 +109,7 @@ func UpdateTimeBalanceEntry(cfg *models.Config, entryID string, entry models.Tim
 
 	// Adiciona os cabeçalhos necessários
 	req.Header.Add("Content-Type", "application/json")
-	req.Header.Add("access-token", cfg.PontoMaisToken)
+	req.Header.Add("access-token", decodedToken)
 
 	// Executa a requisição
 	resp, err := client.Do(req)
@@ -133,6 +137,13 @@ func CreateTimeBalanceEntry(cfg *models.Config, entry models.TimeBalanceEntry) e
 		return fmt.Errorf("variáveis de ambiente não definidas corretamente")
 	}
 
+	// Decodifica o token do Ponto Mais usando a função utilitária
+	decodedToken, err := utils.DecodeBase64(cfg.PontoMaisToken)
+	if err != nil {
+		log.Printf("Erro ao decodificar o token: %v", err)
+		return err
+	}
+
 	// Monta a URL para a requisição
 	url := fmt.Sprintf("%s/time_balance_entries", cfg.PontoMaisBaseURL)
 
@@ -157,7 +168,7 @@ func CreateTimeBalanceEntry(cfg *models.Config, entry models.TimeBalanceEntry) e
 
 	// Adiciona os cabeçalhos necessários
 	req.Header.Add("Content-Type", "application/json")
-	req.Header.Add("access-token", cfg.PontoMaisToken)
+	req.Header.Add("access-token", decodedToken)
 
 	// Executa a requisição
 	resp, err := client.Do(req)
