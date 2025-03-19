@@ -8,6 +8,8 @@ import (
 	"log"
 	"net/http"
 
+	"encoding/base64"
+
 	"github.com/jeffemart/PontoGo/app/internal/models"
 )
 
@@ -16,6 +18,13 @@ func GetEmployees(cfg *models.Config) ([]models.Employee, error) {
 	if cfg.PontoMaisBaseURL == "" || cfg.PontoMaisToken == "" {
 		log.Println("Erro: Variáveis de ambiente PONTOMAIS_TOKEN ou PONTOMAIS_BASE_URL não estão definidas.")
 		return nil, fmt.Errorf("variáveis de ambiente não definidas corretamente")
+	}
+
+	// Decodifica o token do Ponto Mais
+	decodedToken, err := base64.StdEncoding.DecodeString(cfg.PontoMaisToken)
+	if err != nil {
+		log.Printf("Erro ao decodificar o token: %v", err)
+		return nil, err
 	}
 
 	// Monta a URL correta utilizando cfg.PontoMaisBaseURL
@@ -29,8 +38,8 @@ func GetEmployees(cfg *models.Config) ([]models.Employee, error) {
 		return nil, err
 	}
 
-	// Adiciona o cabeçalho com o token de autenticação
-	req.Header.Add("access-token", cfg.PontoMaisToken)
+	// Adiciona o cabeçalho com o token de autenticação decodificado
+	req.Header.Add("access-token", string(decodedToken))
 
 	// Executa a requisição
 	resp, err := client.Do(req)
