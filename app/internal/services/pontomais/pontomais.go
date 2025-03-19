@@ -116,3 +116,55 @@ func UpdateTimeBalanceEntry(cfg *models.Config, entryID string, entry models.Tim
 	log.Printf("Banco de horas atualizado com sucesso para o ID: %s", entryID)
 	return nil
 }
+
+// CreateTimeBalanceEntry cria um novo lançamento no banco de horas de um funcionário
+func CreateTimeBalanceEntry(cfg *models.Config, entry models.TimeBalanceEntry) error {
+	if cfg.PontoMaisBaseURL == "" || cfg.PontoMaisToken == "" {
+		log.Println("Erro: Variáveis de ambiente PONTOMAIS_TOKEN ou PONTOMAIS_BASE_URL não estão definidas.")
+		return fmt.Errorf("variáveis de ambiente não definidas corretamente")
+	}
+
+	// Monta a URL para a requisição
+	url := fmt.Sprintf("%s/time_balance_entries", cfg.PontoMaisBaseURL)
+
+	// Prepara o corpo da requisição
+	requestBody := map[string]models.TimeBalanceEntry{
+		"time_balance_entry": entry,
+	}
+
+	jsonData, err := json.Marshal(requestBody)
+	if err != nil {
+		log.Printf("Erro ao serializar os dados: %v", err)
+		return err
+	}
+
+	// Cria a requisição HTTP
+	client := &http.Client{}
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		log.Printf("Erro ao criar a requisição: %v", err)
+		return err
+	}
+
+	// Adiciona os cabeçalhos necessários
+	req.Header.Add("Content-Type", "application/json")
+	req.Header.Add("access-token", cfg.PontoMaisToken)
+
+	// Executa a requisição
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("Erro ao realizar a requisição: %v", err)
+		return err
+	}
+	defer resp.Body.Close()
+
+	// Verifica o status da resposta
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		log.Printf("Erro na resposta da API. Status: %s. Resposta: %s", resp.Status, string(body))
+		return fmt.Errorf("erro na resposta da API, status: %s", resp.Status)
+	}
+
+	log.Printf("Lançamento no banco de horas criado com sucesso")
+	return nil
+}

@@ -81,6 +81,8 @@ func (b *Bot) handleCommand(message *tgbotapi.Message) {
 		b.handleListEmployees(message)
 	case "editar":
 		b.handleEditTimeBalance(message)
+	case "criar":
+		b.handleCreateTimeBalance(message)
 	default:
 		msg := tgbotapi.NewMessage(message.Chat.ID, "Comando desconhecido. Use /help para ver os comandos disponíveis.")
 		b.api.Send(msg)
@@ -101,14 +103,19 @@ func (b *Bot) handleHelp(message *tgbotapi.Message) {
 /start - Inicia o bot
 /help - Mostra esta mensagem de ajuda
 /listar - Lista todos os colaboradores ativos
-/editar <ID> <quantidade> <data> <observação> <retirada> - Edita o banco de horas de um colaborador
+/editar <ID> <quantidade_segundos> <data> <observação> <retirada> - Edita o banco de horas de um colaborador
+/criar <ID_funcionário> <quantidade_segundos> <data> <observação> <retirada> - Cria um novo lançamento no banco de horas
 
 Exemplo de edição:
-/editar 59 2.5 2023-05-15 "Horas extras" false
+/editar 59 9000.0 2023-05-15 "2.5 horas extras" false
+
+Exemplo de criação:
+/criar 1487972 60.0 2023-05-15 "1 minuto de trabalho" false
 
 Parâmetros:
-- ID: ID do registro no banco de horas
-- quantidade: Valor em horas (use ponto para decimais)
+- ID: ID do registro no banco de horas (para edição)
+- ID_funcionário: ID do funcionário (para criação)
+- quantidade_segundos: Valor em segundos (use ponto para decimais)
 - data: Data no formato YYYY-MM-DD
 - observação: Texto entre aspas com o motivo
 - retirada: true para retirada, false para adição`
@@ -136,12 +143,12 @@ func (b *Bot) handleListEmployees(message *tgbotapi.Message) {
 	}
 
 	var response string
-		if len(employees) == 0 {
-			response = "Nenhum funcionário encontrado."
-		} else {
-			// Retorna apenas a quantidade de funcionários
-			response = fmt.Sprintf("Total de funcionários: %d", len(employees))
-		}
+	if len(employees) == 0 {
+		response = "Nenhum funcionário encontrado."
+	} else {
+		// Retorna apenas a quantidade de funcionários
+		response = fmt.Sprintf("Total de funcionários: %d", len(employees))
+	}
 
 	resultMsg := tgbotapi.NewMessage(message.Chat.ID, response)
 	b.api.Send(resultMsg)
@@ -149,47 +156,66 @@ func (b *Bot) handleListEmployees(message *tgbotapi.Message) {
 
 // handleEditTimeBalance edita o banco de horas de um colaborador
 func (b *Bot) handleEditTimeBalance(message *tgbotapi.Message) {
-	args := strings.SplitN(message.Text, " ", 6)
-	if len(args) < 6 {
+	// Dividimos a mensagem em partes para extrair os argumentos básicos
+	parts := strings.SplitN(message.Text, " ", 5)
+	if len(parts) < 5 {
 		helpMsg := tgbotapi.NewMessage(message.Chat.ID,
-			"Formato incorreto. Use:\n/editar <ID> <quantidade> <data> <observação> <retirada>\n\nExemplo:\n/editar 59 2.5 2023-05-15 \"Horas extras\" false")
+			"Formato incorreto. Use:\n/editar <ID> <quantidade_segundos> <data> <observação> <retirada>\n\nExemplo:\n/editar 3833376 60.0 2025-03-18 \"Editando lançamento\" false")
 		b.api.Send(helpMsg)
 		return
 	}
 
-	// Extrai os argumentos
-	entryID := args[1]
+	// Extrai os argumentos básicos
+	entryID := parts[1]
 
-	amount, err := strconv.ParseFloat(args[2], 64)
+	// Converte a quantidade
+	amount, err := strconv.ParseFloat(parts[2], 64)
 	if err != nil {
 		errorMsg := tgbotapi.NewMessage(message.Chat.ID, "Erro: A quantidade deve ser um número válido (use ponto para decimais).")
 		b.api.Send(errorMsg)
 		return
 	}
 
-	date := args[3]
-	_, err = time.Parse("2006-01-02", date)
+	// Formata a data para o formato esperado pela API (DD/MM/YYYY)
+	inputDate := parts[3]
+	parsedDate, err := time.Parse("2006-01-02", inputDate)
 	if err != nil {
 		errorMsg := tgbotapi.NewMessage(message.Chat.ID, "Erro: A data deve estar no formato YYYY-MM-DD.")
 		b.api.Send(errorMsg)
 		return
 	}
+	formattedDate := parsedDate.Format("02/01/2006")
 
-	// Extrai a observação (pode conter espaços)
-	observationParts := strings.SplitN(args[4], "\"", 3)
-	var observation string
-	if len(observationParts) >= 3 {
-		observation = observationParts[1]
-	} else {
-		observation = args[4]
+	// Extrai a parte final que contém a observação e o parâmetro de retirada
+	lastPart := parts[4]
+
+	// Procura a última ocorrência de aspas para separar a observação do parâmetro de retirada
+	lastQuoteIndex := strings.LastIndex(lastPart, "\"")
+	if lastQuoteIndex == -1 || lastQuoteIndex == 0 {
+		errorMsg := tgbotapi.NewMessage(message.Chat.ID, "Erro: A observação deve estar entre aspas duplas.")
+		b.api.Send(errorMsg)
+		return
 	}
 
-	// Extrai o último argumento (withdraw)
+	// Encontra a primeira ocorrência de aspas
+	firstQuoteIndex := strings.Index(lastPart, "\"")
+	if firstQuoteIndex == lastQuoteIndex {
+		errorMsg := tgbotapi.NewMessage(message.Chat.ID, "Erro: A observação deve estar entre aspas duplas.")
+		b.api.Send(errorMsg)
+		return
+	}
+
+	// Extrai a observação entre aspas
+	observation := lastPart[firstQuoteIndex+1 : lastQuoteIndex]
+
+	// Extrai o parâmetro de retirada após a última aspas
+	withdrawPart := strings.TrimSpace(lastPart[lastQuoteIndex+1:])
+
+	// Verifica se o parâmetro de retirada é válido
 	var withdraw bool
-	withdrawStr := strings.ToLower(args[5])
-	if withdrawStr == "true" {
+	if withdrawPart == "true" {
 		withdraw = true
-	} else if withdrawStr == "false" {
+	} else if withdrawPart == "false" {
 		withdraw = false
 	} else {
 		errorMsg := tgbotapi.NewMessage(message.Chat.ID, "Erro: O parâmetro 'retirada' deve ser 'true' ou 'false'.")
@@ -200,7 +226,7 @@ func (b *Bot) handleEditTimeBalance(message *tgbotapi.Message) {
 	// Cria a entrada para atualização
 	entry := models.TimeBalanceEntry{
 		Amount:      amount,
-		Date:        date,
+		Date:        formattedDate,
 		Observation: observation,
 		Withdraw:    withdraw,
 	}
@@ -217,8 +243,110 @@ func (b *Bot) handleEditTimeBalance(message *tgbotapi.Message) {
 		return
 	}
 
+	// Calcula as horas para exibição
+	hoursAmount := amount / 3600.0
+
 	// Envia mensagem de sucesso
-	successMsg := tgbotapi.NewMessage(message.Chat.ID, fmt.Sprintf("Banco de horas atualizado com sucesso!\n\nID: %s\nQuantidade: %.2f horas\nData: %s\nObservação: %s\nRetirada: %t",
-		entryID, amount, date, observation, withdraw))
+	successMsg := tgbotapi.NewMessage(message.Chat.ID, fmt.Sprintf("Banco de horas atualizado com sucesso!\n\nID: %s\nQuantidade: %.2f segundos (%.2f horas)\nData: %s\nObservação: %s\nRetirada: %t",
+		entryID, amount, hoursAmount, inputDate, observation, withdraw))
+	b.api.Send(successMsg)
+}
+
+// handleCreateTimeBalance cria um novo lançamento no banco de horas de um funcionário
+func (b *Bot) handleCreateTimeBalance(message *tgbotapi.Message) {
+	// Dividimos a mensagem em partes para extrair os argumentos básicos
+	parts := strings.SplitN(message.Text, " ", 5)
+	if len(parts) < 5 {
+		helpMsg := tgbotapi.NewMessage(message.Chat.ID,
+			"Formato incorreto. Use:\n/criar <ID_funcionário> <quantidade_segundos> <data> <observação> <retirada>\n\nExemplo:\n/criar 1487972 3600.0 2023-05-15 \"1 hora de trabalho\" false")
+		b.api.Send(helpMsg)
+		return
+	}
+
+	// Extrai os argumentos básicos
+	employeeID := parts[1]
+
+	// Converte a quantidade diretamente em segundos (sem multiplicar por 3600)
+	secondsAmount, err := strconv.ParseFloat(parts[2], 64)
+	if err != nil {
+		errorMsg := tgbotapi.NewMessage(message.Chat.ID, "Erro: A quantidade deve ser um número válido (use ponto para decimais).")
+		b.api.Send(errorMsg)
+		return
+	}
+
+	// Calcula as horas para exibição na mensagem de sucesso
+	hoursAmount := secondsAmount / 3600.0
+
+	// Formata a data
+	inputDate := parts[3]
+	parsedDate, err := time.Parse("2006-01-02", inputDate)
+	if err != nil {
+		errorMsg := tgbotapi.NewMessage(message.Chat.ID, "Erro: A data deve estar no formato YYYY-MM-DD.")
+		b.api.Send(errorMsg)
+		return
+	}
+	formattedDate := parsedDate.Format("02/01/2006")
+
+	// Extrai a parte final que contém a observação e o parâmetro de retirada
+	lastPart := parts[4]
+
+	// Procura a última ocorrência de aspas para separar a observação do parâmetro de retirada
+	lastQuoteIndex := strings.LastIndex(lastPart, "\"")
+	if lastQuoteIndex == -1 || lastQuoteIndex == 0 {
+		errorMsg := tgbotapi.NewMessage(message.Chat.ID, "Erro: A observação deve estar entre aspas duplas.")
+		b.api.Send(errorMsg)
+		return
+	}
+
+	// Encontra a primeira ocorrência de aspas
+	firstQuoteIndex := strings.Index(lastPart, "\"")
+	if firstQuoteIndex == lastQuoteIndex {
+		errorMsg := tgbotapi.NewMessage(message.Chat.ID, "Erro: A observação deve estar entre aspas duplas.")
+		b.api.Send(errorMsg)
+		return
+	}
+
+	// Extrai a observação entre aspas
+	observation := lastPart[firstQuoteIndex+1 : lastQuoteIndex]
+
+	// Extrai o parâmetro de retirada após a última aspas
+	withdrawPart := strings.TrimSpace(lastPart[lastQuoteIndex+1:])
+
+	// Verifica se o parâmetro de retirada é válido
+	var withdraw bool
+	if withdrawPart == "true" {
+		withdraw = true
+	} else if withdrawPart == "false" {
+		withdraw = false
+	} else {
+		errorMsg := tgbotapi.NewMessage(message.Chat.ID, "Erro: O parâmetro 'retirada' deve ser 'true' ou 'false'.")
+		b.api.Send(errorMsg)
+		return
+	}
+
+	// Cria a entrada para o banco de horas
+	entry := models.TimeBalanceEntry{
+		Amount:      secondsAmount,
+		Date:        formattedDate,
+		EmployeeID:  employeeID,
+		Observation: observation,
+		Withdraw:    withdraw,
+	}
+
+	// Envia mensagem de processamento
+	processingMsg := tgbotapi.NewMessage(message.Chat.ID, "Processando criação do lançamento no banco de horas...")
+	b.api.Send(processingMsg)
+
+	// Cria o lançamento no banco de horas
+	err = services.CreateTimeBalanceEntry(b.config, entry)
+	if err != nil {
+		errorMsg := tgbotapi.NewMessage(message.Chat.ID, fmt.Sprintf("Erro ao criar o lançamento no banco de horas: %v", err))
+		b.api.Send(errorMsg)
+		return
+	}
+
+	// Envia mensagem de sucesso com a conversão para horas para melhor visualização
+	successMsg := tgbotapi.NewMessage(message.Chat.ID, fmt.Sprintf("Lançamento no banco de horas criado com sucesso!\n\nFuncionário ID: %s\nQuantidade: %.2f segundos (%.2f horas)\nData: %s\nObservação: %s\nRetirada: %t",
+		employeeID, secondsAmount, hoursAmount, inputDate, observation, withdraw))
 	b.api.Send(successMsg)
 }
