@@ -135,6 +135,7 @@ func (b *Bot) handleHelp(message *tgbotapi.Message) {
 /listar - Lista todos os colaboradores ativos
 /editar <ID> <quantidade_segundos> <data> <observação> <retirada> - Edita o banco de horas de um colaborador
 /criar <ID_funcionário> <quantidade_segundos> <data> <observação> <retirada> - Cria um novo lançamento no banco de horas
+/relatorio - Permite processar múltiplos lançamentos de banco de horas a partir de um arquivo Excel.
 
 Exemplo de edição:
 /editar 59 9000.0 2023-05-15 "2.5 horas extras" false
