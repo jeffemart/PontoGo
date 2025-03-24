@@ -10,6 +10,7 @@ PontoGo é uma aplicação em Go que integra a API do Ponto Mais com o Telegram,
 - `/listar` - Lista todos os colaboradores ativos
 - `/editar` - Edita um lançamento existente no banco de horas
 - `/criar` - Cria um novo lançamento no banco de horas
+- `/relatorio` - Processa um arquivo Excel para criar múltiplos lançamentos no banco de horas
 
 ### Exemplos de Uso
 
@@ -28,6 +29,31 @@ PontoGo é uma aplicação em Go que integra a API do Ponto Mais com o Telegram,
 # Exemplo: Registrar 2 horas (7200 segundos)
 /criar 1487972 7200.0 2025-03-18 "Horas extras" false
 ```
+
+#### Processar Relatório em Lote
+O comando `/relatorio` permite processar múltiplos lançamentos de banco de horas a partir de um arquivo Excel.
+
+1. Envie o comando `/relatorio`
+2. Envie um arquivo Excel (.xlsx) com as seguintes colunas:
+   - **ID**: ID do funcionário no sistema Ponto Mais
+   - **NOME**: Nome do funcionário (para referência)
+   - **DATA**: Data do lançamento no formato DD/MM/AAAA ou AAAA-MM-DD
+   - **HORAS**: Quantidade em segundos a ser lançada
+   - **OBSERVAÇÃO**: Descrição/motivo do lançamento
+   - **DEBITO**: Indicador se é uma retirada (TRUE/FALSE, SIM/NÃO)
+
+3. O bot processará cada linha do arquivo e criará os lançamentos correspondentes no banco de horas.
+
+**Exemplo de arquivo Excel:**
+| ID       | NOME                           | DATA       | HORAS | OBSERVAÇÃO        | DEBITO |
+|----------|--------------------------------|------------|-------|-------------------|--------|
+| 1234567  | NOME DO COLABORADOR 1          | 19/03/2025 | 36000 | Horas Extras Pagas| TRUE   |
+| 7654321  | NOME DO COLABORADOR 2          | 19/03/2025 | 38460 | Horas Extras Pagas| TRUE   |
+
+**Observações:**
+- A primeira linha do arquivo deve conter os cabeçalhos
+- O valor em HORAS deve ser em segundos (ex: 3600 = 1 hora)
+- O campo DEBITO aceita TRUE/FALSE, SIM/NÃO, S/N (não sensível a maiúsculas/minúsculas)
 
 ## Instalação
 

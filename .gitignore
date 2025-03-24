@@ -26,3 +26,9 @@ go.work.sum
 
 # log file
 *.log
+
+# xlsx file
+*.xlsx
+
+temp/
+temp/*

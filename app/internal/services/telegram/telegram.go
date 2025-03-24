@@ -2,6 +2,9 @@ package telegram
 
 import (
 	"fmt"
+	"io"
+	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -10,13 +13,15 @@ import (
 	"github.com/jeffemart/PontoGo/app/internal/models"
 	services "github.com/jeffemart/PontoGo/app/internal/services/pontomais"
 	"github.com/jeffemart/PontoGo/app/internal/utils"
+	"github.com/xuri/excelize/v2"
 )
 
 // Bot representa a estrutura do bot do Telegram
 type Bot struct {
-	api    *tgbotapi.BotAPI
-	config *models.Config
-	hosts  map[int64]bool
+	api              *tgbotapi.BotAPI
+	config           *models.Config
+	hosts            map[int64]bool
+	awaitingDocument map[int64]string // Mapa para rastrear usuários aguardando documentos
 }
 
 // NewBot cria uma nova instância do bot do Telegram
@@ -35,9 +40,10 @@ func NewBot(cfg *models.Config) (*Bot, error) {
 
 	utils.Logger.Printf("Bot do Telegram criado com sucesso: @%s", bot.Self.UserName)
 	return &Bot{
-		api:    bot,
-		config: cfg,
-		hosts:  hosts,
+		api:              bot,
+		config:           cfg,
+		hosts:            hosts,
+		awaitingDocument: make(map[int64]string),
 	}, nil
 }
 
@@ -66,6 +72,21 @@ func (b *Bot) Start() {
 			continue
 		}
 
+		// Verifica se o usuário está aguardando um documento
+		if command, ok := b.awaitingDocument[update.Message.Chat.ID]; ok {
+			if update.Message.Document != nil {
+				// Processa o documento recebido
+				b.handleDocumentReceived(update.Message, command)
+				// Remove o usuário da lista de espera
+				delete(b.awaitingDocument, update.Message.Chat.ID)
+			} else {
+				// Se não for um documento, envia uma mensagem de erro
+				msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Por favor, envie um arquivo Excel (.xlsx).")
+				b.api.Send(msg)
+			}
+			continue
+		}
+
 		// Processa os comandos
 		if update.Message.IsCommand() {
 			utils.Logger.Printf("Comando recebido: %s do chat ID: %d", update.Message.Command(), update.Message.Chat.ID)
@@ -87,6 +108,8 @@ func (b *Bot) handleCommand(message *tgbotapi.Message) {
 		b.handleEditTimeBalance(message)
 	case "criar":
 		b.handleCreateTimeBalance(message)
+	case "relatorio":
+		b.handleRelatorio(message)
 	default:
 		utils.Logger.Printf("Comando desconhecido recebido: %s", message.Command())
 		msg := tgbotapi.NewMessage(message.Chat.ID, "Comando desconhecido. Use /help para ver os comandos disponíveis.")
@@ -380,4 +403,247 @@ func (b *Bot) handleCreateTimeBalance(message *tgbotapi.Message) {
 	successMsg := tgbotapi.NewMessage(message.Chat.ID, fmt.Sprintf("Lançamento no banco de horas criado com sucesso!\n\nFuncionário ID: %s\nQuantidade: %.2f segundos (%.2f horas)\nData: %s\nObservação: %s\nRetirada: %t",
 		employeeID, secondsAmount, hoursAmount, inputDate, observation, withdraw))
 	b.api.Send(successMsg)
+}
+
+// handleRelatorio solicita ao usuário que envie um arquivo Excel
+func (b *Bot) handleRelatorio(message *tgbotapi.Message) {
+	utils.Logger.Printf("Comando /relatorio recebido do chat ID: %d", message.Chat.ID)
+
+	// Marca o usuário como aguardando um documento
+	b.awaitingDocument[message.Chat.ID] = "relatorio"
+
+	// Envia uma mensagem para o usuário solicitando o arquivo
+	msg := tgbotapi.NewMessage(message.Chat.ID, "Por favor, envie o arquivo Excel com os dados.")
+	b.api.Send(msg)
+}
+
+// handleDocumentReceived processa o documento recebido após um comando
+func (b *Bot) handleDocumentReceived(message *tgbotapi.Message, command string) {
+	utils.Logger.Printf("Documento recebido do chat ID: %d para o comando: %s", message.Chat.ID, command)
+
+	// Obtém o arquivo do Telegram
+	fileID := message.Document.FileID
+	file, err := b.api.GetFile(tgbotapi.FileConfig{FileID: fileID})
+	if err != nil {
+		utils.Logger.Printf("Erro ao obter o arquivo: %v", err)
+		errorMsg := tgbotapi.NewMessage(message.Chat.ID, "Erro ao obter o arquivo.")
+		b.api.Send(errorMsg)
+		return
+	}
+
+	// Baixa o arquivo
+	filePath := fmt.Sprintf("https://api.telegram.org/file/bot%s/%s", b.api.Token, file.FilePath)
+	resp, err := http.Get(filePath)
+	if err != nil {
+		utils.Logger.Printf("Erro ao baixar o arquivo: %v", err)
+		errorMsg := tgbotapi.NewMessage(message.Chat.ID, "Erro ao baixar o arquivo.")
+		b.api.Send(errorMsg)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Cria um arquivo temporário em vez de usar um caminho fixo
+	tempFile, err := os.CreateTemp("", "excel-*.xlsx")
+	if err != nil {
+		utils.Logger.Printf("Erro ao criar arquivo temporário: %v", err)
+		errorMsg := tgbotapi.NewMessage(message.Chat.ID, "Erro ao processar o arquivo.")
+		b.api.Send(errorMsg)
+		return
+	}
+	defer os.Remove(tempFile.Name()) // Garante que o arquivo será removido ao final
+	defer tempFile.Close()
+
+	// Copia o conteúdo do arquivo baixado para o arquivo temporário
+	_, err = io.Copy(tempFile, resp.Body)
+	if err != nil {
+		utils.Logger.Printf("Erro ao salvar arquivo temporário: %v", err)
+		errorMsg := tgbotapi.NewMessage(message.Chat.ID, "Erro ao salvar o arquivo.")
+		b.api.Send(errorMsg)
+		return
+	}
+
+	// Fecha o arquivo para garantir que todos os dados foram escritos
+	tempFile.Close()
+
+	// Processa o arquivo de acordo com o comando
+	if command == "relatorio" {
+		b.processRelatorioFile(message, tempFile.Name())
+	}
+}
+
+// processRelatorioFile processa o arquivo Excel do relatório
+func (b *Bot) processRelatorioFile(message *tgbotapi.Message, filePath string) {
+	// Lê o arquivo Excel
+	f, err := excelize.OpenFile(filePath)
+	if err != nil {
+		utils.Logger.Printf("Erro ao abrir o arquivo Excel: %v", err)
+		errorMsg := tgbotapi.NewMessage(message.Chat.ID, "Erro ao abrir o arquivo Excel.")
+		b.api.Send(errorMsg)
+		return
+	}
+	defer f.Close()
+
+	// Lê as linhas da primeira planilha
+	sheetName := f.GetSheetName(0)
+	rows, err := f.GetRows(sheetName)
+	if err != nil {
+		utils.Logger.Printf("Erro ao ler as linhas da planilha: %v", err)
+		errorMsg := tgbotapi.NewMessage(message.Chat.ID, "Erro ao ler as linhas da planilha.")
+		b.api.Send(errorMsg)
+		return
+	}
+
+	// Verifica se há linhas suficientes
+	if len(rows) < 2 {
+		utils.Logger.Println("Arquivo Excel não contém dados suficientes")
+		errorMsg := tgbotapi.NewMessage(message.Chat.ID, "O arquivo Excel não contém dados suficientes.")
+		b.api.Send(errorMsg)
+		return
+	}
+
+	// Imprime as linhas no console para debug
+	utils.Logger.Println("Dados do arquivo Excel:")
+	for i, row := range rows {
+		utils.Logger.Printf("Linha %d: %v", i, row)
+	}
+
+	// Identifica os índices das colunas com base nos cabeçalhos
+	headers := rows[0]
+	headerMap := make(map[string]int)
+
+	for i, header := range headers {
+		headerMap[strings.ToUpper(strings.TrimSpace(header))] = i
+	}
+
+	// Verifica se todas as colunas necessárias estão presentes
+	requiredHeaders := []string{"ID", "NOME", "DATA", "HORAS", "OBSERVAÇÃO", "DEBITO"}
+	missingHeaders := []string{}
+
+	for _, header := range requiredHeaders {
+		if _, exists := headerMap[header]; !exists {
+			missingHeaders = append(missingHeaders, header)
+		}
+	}
+
+	if len(missingHeaders) > 0 {
+		errorMsg := fmt.Sprintf("Colunas obrigatórias não encontradas: %s", strings.Join(missingHeaders, ", "))
+		utils.Logger.Println(errorMsg)
+		msg := tgbotapi.NewMessage(message.Chat.ID, errorMsg)
+		b.api.Send(msg)
+		return
+	}
+
+	// Envia mensagem de processamento
+	processingMsg := tgbotapi.NewMessage(message.Chat.ID, "Processando lançamentos no banco de horas. Isso pode levar alguns instantes...")
+	b.api.Send(processingMsg)
+
+	// Processa cada linha (exceto o cabeçalho)
+	successCount := 0
+	errorCount := 0
+	errorDetails := make([]string, 0)
+
+	for i, row := range rows {
+		if i == 0 {
+			continue // Pula o cabeçalho
+		}
+
+		// Verifica se a linha tem dados suficientes
+		if len(row) < len(headers) {
+			errorMsg := fmt.Sprintf("Linha %d: Dados insuficientes", i)
+			utils.Logger.Println(errorMsg)
+			errorDetails = append(errorDetails, errorMsg)
+			errorCount++
+			continue
+		}
+
+		// Extrai os dados da linha usando os índices do mapa de cabeçalhos
+		employeeID := row[headerMap["ID"]]
+		employeeName := row[headerMap["NOME"]]
+		dateStr := row[headerMap["DATA"]]
+		secondsStr := row[headerMap["HORAS"]] // Agora tratamos como segundos, não horas
+		observation := row[headerMap["OBSERVAÇÃO"]]
+		debitStr := row[headerMap["DEBITO"]]
+
+		// Converte a data para o formato correto
+		date, err := time.Parse("02/01/2006", dateStr)
+		if err != nil {
+			// Tenta outro formato de data
+			date, err = time.Parse("2006-01-02", dateStr)
+			if err != nil {
+				errorMsg := fmt.Sprintf("Linha %d (%s): Formato de data inválido '%s'", i, employeeName, dateStr)
+				utils.Logger.Println(errorMsg)
+				errorDetails = append(errorDetails, errorMsg)
+				errorCount++
+				continue
+			}
+		}
+		formattedDate := date.Format("02/01/2006")
+
+		// Converte a string de segundos para float
+		seconds, err := strconv.ParseFloat(secondsStr, 64)
+		if err != nil {
+			errorMsg := fmt.Sprintf("Linha %d (%s): Valor de segundos inválido '%s'", i, employeeName, secondsStr)
+			utils.Logger.Println(errorMsg)
+			errorDetails = append(errorDetails, errorMsg)
+			errorCount++
+			continue
+		}
+
+		// Calcula as horas para exibição (apenas para logs)
+		hours := seconds / 3600
+
+		// Determina se é uma retirada
+		withdraw := strings.ToLower(debitStr) == "true" || strings.ToLower(debitStr) == "sim" || strings.ToLower(debitStr) == "s"
+
+		// Cria a entrada para o banco de horas
+		entry := models.TimeBalanceEntry{
+			Amount:      seconds, // Usa os segundos diretamente
+			Date:        formattedDate,
+			EmployeeID:  employeeID,
+			Observation: observation,
+			Withdraw:    withdraw,
+		}
+
+		// Cria o lançamento no banco de horas
+		utils.Logger.Printf("Criando lançamento para o funcionário ID: %s (%s), Segundos: %.2f (%.2f horas), Data: %s",
+			employeeID, employeeName, seconds, hours, dateStr)
+		err = services.CreateTimeBalanceEntry(b.config, entry)
+		if err != nil {
+			errorMsg := fmt.Sprintf("Linha %d (%s): %v", i, employeeName, err)
+			utils.Logger.Println(errorMsg)
+			errorDetails = append(errorDetails, errorMsg)
+			errorCount++
+		} else {
+			successCount++
+			utils.Logger.Printf("Lançamento criado com sucesso para o funcionário ID: %s (%s)", employeeID, employeeName)
+		}
+
+		// Pequena pausa para não sobrecarregar a API
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	// Prepara a mensagem de resultado
+	var resultText strings.Builder
+	resultText.WriteString(fmt.Sprintf("Processamento concluído!\n\nLançamentos criados com sucesso: %d\nErros: %d\n", successCount, errorCount))
+
+	// Adiciona detalhes dos erros, se houver
+	if errorCount > 0 {
+		resultText.WriteString("\nDetalhes dos erros:\n")
+		// Limita a quantidade de erros mostrados para não exceder o limite de mensagem do Telegram
+		maxErrorsToShow := 10
+		if len(errorDetails) > maxErrorsToShow {
+			for i := 0; i < maxErrorsToShow; i++ {
+				resultText.WriteString("- " + errorDetails[i] + "\n")
+			}
+			resultText.WriteString(fmt.Sprintf("... e mais %d erros.\n", len(errorDetails)-maxErrorsToShow))
+		} else {
+			for _, errDetail := range errorDetails {
+				resultText.WriteString("- " + errDetail + "\n")
+			}
+		}
+	}
+
+	// Envia a mensagem com o resultado
+	resultMsg := tgbotapi.NewMessage(message.Chat.ID, resultText.String())
+	b.api.Send(resultMsg)
 }
